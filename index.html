@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PlayTag · 교육·설명회 신청 관리</title>
+  <meta name="description" content="PlayTag 교육·설명회 신청 및 일정 배정 관리 시스템">
+
+  <!-- 🔒 보안 헤더 (CSP) -->
+  <!-- script-src: Chart.js(cdnjs), Google API(accounts/apis) + 인라인 스크립트(nonce 대신 unsafe-inline은 레거시 지원) -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline'
+                   https://cdnjs.cloudflare.com
+                   https://accounts.google.com
+                   https://apis.google.com;
+                 style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 font-src   'self' https://fonts.gstatic.com;
+                 img-src    'self' data: https://lh3.googleusercontent.com https://www.gstatic.com;
+                 connect-src 'self' https://accounts.google.com https://www.googleapis.com https://api.anthropic.com;
+                 frame-ancestors 'none';
+                 base-uri   'self';
+                 form-action 'self';">
+
+  <!-- 🔒 클릭재킹 방지 -->
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <!-- 🔒 MIME 스니핑 방지 -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <!-- 🔒 Referrer 정책 -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ════════════════════════════════════════
+     LOGIN
+════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-ring login-ring-1"></div>
+  <div class="login-ring login-ring-2"></div>
+
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-mark">
+        <div class="logo-icon">🏷️</div>
+        <div class="logo-text">Play<span>Tag</span></div>
+      </div>
+      <p class="login-subtitle">교육·설명회 신청 관리 시스템</p>
+    </div>
+
+    <div class="login-tabs">
+      <button class="login-tab active" onclick="setLoginType('applicant')">지사 신청자</button>
+      <button class="login-tab"        onclick="setLoginType('admin')">관리자 · 담당자</button>
+    </div>
+
+    <!-- ── 지사 신청자 로그인 ── -->
+    <div id="login-form-applicant">
+      <div class="login-field">
+        <label>아이디</label>
+        <input type="text" id="l-id" placeholder="가입 시 설정한 아이디"
+          onkeydown="if(event.key==='Enter') loginAs('applicant')">
+      </div>
+      <div class="login-field">
+        <label>비밀번호</label>
+        <input type="password" id="l-pw" placeholder="비밀번호 입력"
+          onkeydown="if(event.key==='Enter') loginAs('applicant')">
+      </div>
+      <button class="btn-login" onclick="loginAs('applicant')">로그인</button>
+      <div style="text-align:center;margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,.1);">
+        <span style="color:rgba(255,255,255,.4);font-size:13px;">처음 이용하시나요?</span>
+        <button onclick="openSignup()"
+          style="background:none;border:none;color:var(--pt-cyan);font-size:13px;font-weight:700;cursor:pointer;margin-left:6px;font-family:inherit;padding:0;">
+          회원가입 →
+        </button>
+      </div>
+    </div>
+
+    <!-- ── 관리자 · 담당자 로그인 (Google OAuth) ── -->
+    <div id="login-form-admin" style="display:none;">
+
+      <!-- Google 로그인 버튼 -->
+      <button class="btn-google-login" id="btn-google-login" onclick="loginWithGoogle()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20" alt="Google">
+        Google 계정으로 로그인
+      </button>
+
+      <!-- 로딩 상태 -->
+      <div id="google-login-loading" style="display:none;text-align:center;padding:16px 0;">
+        <div class="login-spinner"></div>
+        <p style="color:rgba(255,255,255,.5);font-size:13px;margin-top:10px;">Google 계정 확인 중...</p>
+      </div>
+
+      <!-- Google OAuth 미설정 시 → 기존 ID/PW 폴백 -->
+      <div id="login-admin-fallback" style="display:none;">
+        <div style="text-align:center;margin-bottom:16px;">
+          <span style="font-size:11px;color:rgba(255,255,255,.35);background:rgba(255,255,255,.07);padding:4px 10px;border-radius:6px;">
+            ⚙️ Google OAuth 미설정 — 임시 로그인
+          </span>
+        </div>
+        <div class="login-field">
+          <label>관리자 ID</label>
+          <input type="text" id="la-id" placeholder="admin"
+            onkeydown="if(event.key==='Enter') loginAs('admin')">
+        </div>
+        <div class="login-field">
+          <label>비밀번호</label>
+          <input type="password" id="la-pw" placeholder="비밀번호"
+            onkeydown="if(event.key==='Enter') loginAs('admin')">
+        </div>
+        <button class="btn-login" onclick="loginAs('admin')">관리자 로그인</button>
+      </div>
+
+      <!-- 설명 텍스트 -->
+      <p id="google-login-hint" style="text-align:center;color:rgba(255,255,255,.35);font-size:12px;margin-top:14px;line-height:1.6;">
+        등록된 Google 계정으로 로그인하면<br>Google 캘린더가 자동으로 연동됩니다.
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     APP SHELL
+════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- 상단 네비게이션 -->
+  <nav class="topbar">
+    <div class="topbar-logo">
+      <div class="tl-icon">🏷️</div>
+      Play<span>Tag</span>
+    </div>
+    <div class="topbar-nav" id="topbar-nav"></div>
+    <div class="topbar-right">
+      <div class="user-badge">
+        <div class="user-dot" id="user-dot"></div>
+        <span id="user-label"></span>
+      </div>
+      <!-- Google Calendar 연동 상태 뱃지 (본사 전용, setupNav에서 표시) -->
+      <div id="gcal-topbar-badge" style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px 12px;cursor:pointer;font-size:12px;color:rgba(255,255,255,.75);white-space:nowrap;" onclick="showPage('page-gcal-settings');$$('.nav-btn').forEach(b=>b.classList.remove('active'))">
+        <img src="https://www.gstatic.com/images/branding/product/1x/calendar_2020q4_16dp.png" width="15" height="15" alt="" style="border-radius:3px;flex-shrink:0;">
+        <span id="gcal-status-dot" style="width:7px;height:7px;border-radius:50%;background:#94A3B8;flex-shrink:0;"></span>
+        <span id="gcal-status-text">Google 캘린더</span>
+      </div>
+      <button class="btn-logout" onclick="logout()">로그아웃</button>
+    </div>
+  </nav>
+
+  <div class="content">
+
+    <!-- ── 지사: 신청하기 ── -->
+    <div class="page" id="page-apply">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">📋</div>교육·설명회 신청</div>
+        </div>
+
+        <div class="section-title">프로그램 선택</div>
+        <div class="program-grid">
+          <div class="prog-card" onclick="selectProg(this,'교사교육')">
+            <div class="prog-emoji">👩‍🏫</div><div class="prog-name">교사교육</div>
+          </div>
+          <div class="prog-card" onclick="selectProg(this,'부모교육')">
+            <div class="prog-emoji">👨‍👩‍👧</div><div class="prog-name">부모교육</div>
+          </div>
+          <div class="prog-card" onclick="selectProg(this,'OT')">
+            <div class="prog-emoji">🎓</div><div class="prog-name">OT</div>
+          </div>
+          <div class="prog-card" onclick="selectProg(this,'설명회')">
+            <div class="prog-emoji">📊</div><div class="prog-name">설명회</div>
+          </div>
+        </div>
+
+        <div class="form-grid" style="margin-bottom:16px;">
+          <div class="form-group">
+            <label class="form-label">지사명</label>
+            <select class="form-control" id="f-branch">
+              <option value="">선택</option>
+              <option>서울 강남지사</option><option>서울 강북지사</option>
+              <option>경기 수원지사</option><option>경기 성남지사</option>
+              <option>부산 해운대지사</option><option>대구 수성지사</option>
+              <option>인천 남동지사</option><option>광주 서구지사</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">예상 인원</label>
+            <input class="form-control" type="number" id="f-count" placeholder="명" min="1">
+          </div>
+
+          <!-- 주소 검색 -->
+          <div class="form-group form-full">
+            <label class="form-label">장소 검색</label>
+            <div style="display:flex;gap:8px;">
+              <input class="form-control" type="text" id="f-addr-search"
+                placeholder="건물명 또는 도로명 주소 입력 (예: 강남구청, 테헤란로 123)"
+                style="flex:1;" oninput="addrInputChange()">
+              <button class="btn btn-primary" onclick="searchAddress()">🔍 검색</button>
+            </div>
+            <div id="addr-results-box" style="display:none;" class="addr-result-list">
+              <div class="addr-loading" id="addr-loading">
+                <span class="spinner"></span>검색 중...
+              </div>
+              <div id="addr-result-items"></div>
+            </div>
+          </div>
+          <div class="form-group" id="f-addr-wrap" style="display:none;">
+            <label class="form-label">선택된 주소</label>
+            <input class="form-control" type="text" id="f-addr" readonly>
+          </div>
+          <div class="form-group" id="f-addr-detail-wrap" style="display:none;">
+            <label class="form-label">상세주소</label>
+            <input class="form-control" type="text" id="f-addr-detail" placeholder="동/호수, 층수 등">
+          </div>
+
+          <div class="form-group form-full">
+            <label class="form-label">특이사항</label>
+            <textarea class="form-control" id="f-note"
+              placeholder="특이사항이 있으면 입력해 주세요 (주차 여부, 엘리베이터 유무 등)"></textarea>
+          </div>
+        </div>
+
+        <!-- 희망 일시 -->
+        <div class="section-title">
+          희망 일시 선택
+          <span class="sub">(최대 3개 · 우선순위 순서로 입력)</span>
+        </div>
+        <div class="date-slots" id="date-slots-wrap">
+          <div class="date-slot" id="slot-row-0">
+            <div class="slot-num" style="background:var(--pt-blue);">1</div>
+            <input type="datetime-local" id="d0" onchange="updateDateConfirm()">
+            <span class="slot-label">1순위</span>
+          </div>
+          <div class="date-slot" id="slot-row-1">
+            <div class="slot-num" style="background:#64748B;">2</div>
+            <input type="datetime-local" id="d1" onchange="updateDateConfirm()">
+            <span class="slot-label">2순위</span>
+          </div>
+          <div class="date-slot" id="slot-row-2">
+            <div class="slot-num" style="background:#94A3B8;">3</div>
+            <input type="datetime-local" id="d2" onchange="updateDateConfirm()">
+            <span class="slot-label">3순위</span>
+          </div>
+        </div>
+
+        <!-- 확인 배너 -->
+        <div class="dates-confirm-bar" id="dates-confirm-bar" style="display:none;">
+          <div class="dates-confirm-info">
+            <strong id="dates-confirm-count">0개</strong>의 희망 일시가 선택되었습니다.
+            <div id="dates-confirm-list" style="margin-top:4px;font-size:12px;color:var(--pt-gray);"></div>
+          </div>
+          <button class="btn btn-primary" onclick="confirmDates()">✅ 일시 확인</button>
+        </div>
+
+        <!-- 확인 완료 표시 -->
+        <div id="dates-confirmed-display" style="display:none;" class="dates-confirmed-wrap">
+          <div class="dates-confirmed-icon">✅</div>
+          <div>
+            <div class="dates-confirmed-title">희망 일시 확인 완료</div>
+            <div class="dates-confirmed-text" id="dates-confirmed-text"></div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="editDates()" style="margin-left:auto;">수정</button>
+        </div>
+
+        <div style="margin-top:20px;display:flex;justify-content:flex-end;gap:10px;">
+          <button class="btn btn-ghost"    onclick="clearForm()">초기화</button>
+          <button class="btn btn-primary"  onclick="submitApplication()">✅ 신청 완료</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 지사: 내 신청 현황 ── -->
+    <div class="page" id="page-my-apps">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">📬</div>내 신청 현황</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>프로그램</th><th>신청일</th><th>희망일시</th>
+                <th>장소</th><th>지사</th><th>인원</th>
+                <th>상태</th><th>확정일시</th><th>담당자</th>
+              </tr>
+            </thead>
+            <tbody id="my-apps-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 공통: 캘린더 ── -->
+    <div class="page" id="page-calendar">
+      <div class="card">
+        <div class="cal-header">
+          <div class="cal-title" id="cal-title"></div>
+          <div class="cal-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#BFDBFE;"></div>교사교육</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#A7F3D0;"></div>부모교육</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#DDD6FE;"></div>OT</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#FDE68A;"></div>설명회</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#FED7AA;border:1px solid #F97316;"></div>대기</div>
+          </div>
+          <div class="cal-nav">
+            <button onclick="calNav(-1)" title="이전 달">‹</button>
+            <button onclick="calNav(0)"  title="오늘">오늘</button>
+            <button onclick="calNav(1)"  title="다음 달">›</button>
+          </div>
+        </div>
+        <div class="cal-grid" id="cal-grid"></div>
+      </div>
+    </div>
+
+    <!-- ── 본사: 전체 신청 목록 ── -->
+    <div class="page" id="page-admin-apps">
+      <div class="stats-row" id="admin-stats"></div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">📋</div>전체 신청 목록</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <select class="form-control" style="width:120px;padding:7px 10px;"
+              onchange="filterApps(this.value,'status')">
+              <option value="">전체 상태</option>
+              <option value="pending">대기 중</option>
+              <option value="confirmed">확정</option>
+              <option value="rejected">반려</option>
+            </select>
+            <select class="form-control" style="width:120px;padding:7px 10px;"
+              onchange="filterApps(this.value,'prog')">
+              <option value="">전체 프로그램</option>
+              <option>교사교육</option><option>부모교육</option>
+              <option>OT</option><option>설명회</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>신청자</th><th>프로그램</th><th>지사</th><th>신청일</th>
+                <th>희망일시(1순위)</th><th>인원</th><th>상태</th>
+                <th>담당자</th><th>확정일시</th><th>관리</th>
+              </tr>
+            </thead>
+            <tbody id="admin-apps-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 본사: 신청자 등록 ── -->
+    <div class="page" id="page-admin-register">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">➕</div>신청자 등록</div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">지사명</label>
+            <select class="form-control" id="reg-branch">
+              <option value="">선택</option>
+              <option>서울 강남지사</option><option>서울 강북지사</option>
+              <option>경기 수원지사</option><option>경기 성남지사</option>
+              <option>부산 해운대지사</option><option>대구 수성지사</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">이름</label>
+            <input class="form-control" type="text" id="reg-name" placeholder="이름">
+          </div>
+          <div class="form-group">
+            <label class="form-label">연락처</label>
+            <input class="form-control" type="text" id="reg-tel" placeholder="010-0000-0000">
+          </div>
+          <div class="form-group">
+            <label class="form-label">사업자등록번호</label>
+            <input class="form-control" type="text" id="reg-biz" placeholder="000-00-00000">
+          </div>
+          <div class="form-group form-full">
+            <label class="form-label">주소</label>
+            <input class="form-control" type="text" id="reg-addr" placeholder="주소 입력">
+          </div>
+          <div class="form-group form-full">
+            <label class="form-label">사업자등록증 업로드</label>
+            <input class="form-control" type="file" accept=".pdf,.jpg,.png">
+          </div>
+        </div>
+        <div style="margin-top:20px;display:flex;justify-content:flex-end;">
+          <button class="btn btn-primary" onclick="registerApplicant()">📝 등록 완료</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">👥</div>등록된 신청자</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>이름</th><th>지사</th><th>연락처</th><th>주소</th><th>사업자번호</th><th>등록일</th><th>가입 상태</th></tr>
+            </thead>
+            <tbody id="reg-list-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 본사: 담당자 관리 ── -->
+    <div class="page" id="page-staff">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><div class="icon icon-blue">👤</div>담당자 관리</div>
+          <button class="btn btn-primary" onclick="openStaffModal()">+ 담당자 등록</button>
+        </div>
+        <div class="staff-list-grid" id="staff-list-grid"></div>
+      </div>
+    </div>
+
+    <!-- ── 본사: 퍼포먼스 ── -->
+    <div class="page" id="page-performance">
+
+      <!-- 상단 KPI 카드 -->
+      <div class="stats-row" id="perf-stats"></div>
+
+      <!-- 퍼포먼스 탭 바 -->
+      <div class="perf-tab-bar">
+        <button class="perf-tab active" onclick="switchPerfTab('overview',this)">📊 종합 현황</button>
+        <button class="perf-tab" onclick="switchPerfTab('data-entry',this)">📝 데이터 입력</button>
+        <button class="perf-tab" onclick="switchPerfTab('charts',this)">📈 차트 분석</button>
+        <button class="perf-tab" onclick="switchPerfTab('ranking',this)">🏆 담당자 랭킹</button>
+      </div>
+
+      <!-- ── TAB: 종합 현황 ── -->
+      <div class="perf-panel active" id="perf-tab-overview">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+          <!-- 프로그램별 진행 현황 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">📋</div>프로그램별 진행 현황</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-prog-bar','_renderProgBar',this.value)">
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="line">꺾은선</option>
+                <option value="area">영역</option>
+                <option value="mixed">혼합(막대+선)</option>
+              </select>
+            </div>
+            <canvas id="chart-prog-bar" height="220"></canvas>
+          </div>
+
+          <!-- 참가자 유형 분포 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">👥</div>참가자 유형 분포</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-type-donut','_renderTypeDonut',this.value)">
+                <option value="doughnut">도넛</option>
+                <option value="pie">파이</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="polarArea">폴라</option>
+              </select>
+            </div>
+            <canvas id="chart-type-donut" height="220"></canvas>
+          </div>
+
+          <!-- 월별 신청 트렌드 -->
+          <div class="card chart-card" style="margin:0;grid-column:1/-1;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">📅</div>월별 신청 트렌드</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-monthly-line','_renderMonthlyLine',this.value)">
+                <option value="line">꺾은선</option>
+                <option value="area">영역</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_stacked">누적 막대</option>
+              </select>
+            </div>
+            <canvas id="chart-monthly-line" height="140"></canvas>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── TAB: 데이터 입력 ── -->
+      <div class="perf-panel" id="perf-tab-data-entry">
+        <div class="card" style="margin:0 0 16px;">
+          <div class="card-header">
+            <div class="card-title"><div class="icon icon-blue">📝</div>프로그램 결과 데이터 입력</div>
+            <button class="btn btn-primary" onclick="openDataEntryModal()">+ 데이터 입력</button>
+          </div>
+          <p style="font-size:13px;color:var(--pt-gray);margin-bottom:16px;">확정된 프로그램의 실제 참가 결과를 입력하면 차트에 자동 반영됩니다.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>프로그램</th><th>지사</th><th>담당자</th><th>진행일</th>
+                  <th>실참가인원</th><th>학부모</th><th>선생님</th><th>원장</th>
+                  <th>만족도</th><th>특이사항</th><th>관리</th>
+                </tr>
+              </thead>
+              <tbody id="data-entry-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: 차트 분석 ── -->
+      <div class="perf-panel" id="perf-tab-charts">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+          <!-- 담당자별 담당 건수 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">📊</div>담당자별 담당 건수</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-staff-hbar','_renderStaffHBar',this.value)">
+                <option value="bar_h">가로 막대</option>
+                <option value="bar">세로 막대</option>
+                <option value="line">꺾은선</option>
+                <option value="doughnut">도넛</option>
+                <option value="pie">파이</option>
+                <option value="polarArea">폴라</option>
+              </select>
+            </div>
+            <canvas id="chart-staff-hbar" height="260"></canvas>
+          </div>
+
+          <!-- 담당자별 역량 레이더 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">🕸</div>담당자별 역량 레이더</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-radar','_renderRadar',this.value)">
+                <option value="radar">레이더</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="line">꺾은선</option>
+              </select>
+            </div>
+            <canvas id="chart-radar" height="260"></canvas>
+          </div>
+
+          <!-- 프로그램별 평균 만족도 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">⭐</div>프로그램별 평균 만족도</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-satisfaction','_renderSatisfaction',this.value)">
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="line">꺾은선</option>
+                <option value="radar">레이더</option>
+                <option value="doughnut">도넛</option>
+                <option value="pie">파이</option>
+                <option value="polarArea">폴라</option>
+              </select>
+            </div>
+            <canvas id="chart-satisfaction" height="200"></canvas>
+          </div>
+
+          <!-- 담당자별 참가자 유형 구성 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">👤</div>담당자별 참가자 유형 구성</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-stacked-type','_renderStackedType',this.value)">
+                <option value="bar_stacked">누적 막대</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="bar_h_stacked">가로 누적</option>
+                <option value="line">꺾은선</option>
+                <option value="area">영역</option>
+              </select>
+            </div>
+            <canvas id="chart-stacked-type" height="200"></canvas>
+          </div>
+
+          <!-- 지사별 신청 분포 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">🗺</div>지사별 신청 분포</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-branch-pie','_renderBranchPie',this.value)">
+                <option value="pie">파이</option>
+                <option value="doughnut">도넛</option>
+                <option value="polarArea">폴라</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+              </select>
+            </div>
+            <canvas id="chart-branch-pie" height="220"></canvas>
+          </div>
+
+          <!-- 실참가 인원 분포 -->
+          <div class="card chart-card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-title"><div class="icon icon-blue">📉</div>실참가 인원 분포</div>
+              <select class="chart-type-select" onchange="changeChartType('chart-bubble','_renderBubble',this.value)">
+                <option value="bubble">버블</option>
+                <option value="scatter">산점도</option>
+                <option value="bar">세로 막대</option>
+                <option value="bar_h">가로 막대</option>
+                <option value="line">꺾은선</option>
+              </select>
+            </div>
+            <canvas id="chart-bubble" height="220"></canvas>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── TAB: 담당자 랭킹 ── -->
+      <div class="perf-panel" id="perf-tab-ranking">
+        <div id="perf-ranking-content"></div>
+      </div>
+
+    </div>
+
+    <!-- ── 본사: Google 캘린더 설정 ── -->
+    <div class="page" id="page-gcal-settings">
+
+      <!-- ① 페이지 타이틀 -->
+      <div style="margin-bottom:24px;">
+        <h2 style="font-size:20px;font-weight:800;color:var(--pt-navy);margin:0 0 6px;">연결 설정</h2>
+        <p style="font-size:14px;color:var(--pt-gray);margin:0;">다른 제품과 연동해서 생산성을 올려보세요.</p>
+      </div>
+
+      <!-- ② 연결 카드 목록 -->
+      <div class="conn-section-title">Google 캘린더</div>
+      <div class="conn-card-list">
+
+        <!-- 교육 일정 캘린더 -->
+        <div class="conn-card" id="conn-card-edu">
+          <div class="conn-card-logo">
+            <img src="https://www.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png" width="36" height="36" alt="Google Calendar">
+          </div>
+          <div class="conn-card-body">
+            <div class="conn-card-name">교육 일정 캘린더</div>
+            <div class="conn-card-desc">배정 확정된 교육·설명회 일정이 Google 캘린더에 자동으로 등록됩니다.</div>
+            <div class="conn-card-meta" id="conn-meta-edu" style="display:none;"></div>
+          </div>
+          <div class="conn-card-action">
+            <div class="conn-status-badge" id="conn-badge-edu" style="display:none;">
+              <span class="conn-dot connected"></span>연동 중
+            </div>
+            <button class="conn-btn" id="conn-btn-edu" onclick="gcalOpenModal('edu')">연결하기 ›</button>
+          </div>
+        </div>
+
+        <!-- API 설정 (접을 수 있는 카드) -->
+        <div class="conn-card conn-card-setup" id="conn-card-setup">
+          <div class="conn-card-logo" style="background:#F8FAFF;">
+            <span style="font-size:22px;">⚙️</span>
+          </div>
+          <div class="conn-card-body">
+            <div class="conn-card-name">API 설정</div>
+            <div class="conn-card-desc">Google Cloud Console에서 OAuth Client ID를 발급받아 입력해주세요.</div>
+            <div class="conn-setup-inline" id="conn-setup-inline" style="display:none;margin-top:14px;">
+              <div style="font-size:12px;color:var(--pt-gray);margin-bottom:6px;">Client ID 입력 후 적용하면 Google 계정 연결이 활성화됩니다.</div>
+              <div style="display:flex;gap:8px;">
+                <input class="form-control" type="text" id="gcal-client-id-input"
+                  placeholder="000000000000-xxxx.apps.googleusercontent.com"
+                  style="flex:1;font-size:12px;font-family:monospace;">
+                <button class="btn btn-primary btn-sm" onclick="applyClientId()">적용</button>
+              </div>
+            </div>
+          </div>
+          <div class="conn-card-action">
+            <button class="conn-btn conn-btn-ghost" onclick="toggleSetupInline()">설정하기 ›</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ③ 관리자·담당자 Google 계정 등록 -->
+      <div class="conn-section-title" style="margin-top:32px;">로그인 허용 계정 관리</div>
+      <div class="conn-card-list">
+        <div style="padding:20px 24px;">
+          <div style="font-size:13px;color:var(--pt-gray);margin-bottom:16px;line-height:1.7;">
+            아래 등록된 Google 이메일만 <b>관리자·담당자</b> 탭에서 Google 로그인이 가능합니다.<br>
+            담당자는 담당자 관리 탭에서 이메일 등록 시 자동으로 로그인이 허용됩니다.
+          </div>
+
+          <!-- 관리자 이메일 목록 -->
+          <div style="margin-bottom:14px;">
+            <div style="font-size:12px;font-weight:700;color:var(--pt-navy);margin-bottom:8px;">관리자 이메일</div>
+            <div id="admin-email-list"></div>
+          </div>
+
+          <!-- 이메일 추가 -->
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <input class="form-control" type="email" id="admin-email-input"
+              placeholder="관리자 Google 이메일 추가"
+              style="flex:1;font-size:13px;"
+              onkeydown="if(event.key==='Enter') addAdminEmail()">
+            <button class="btn btn-primary btn-sm" onclick="addAdminEmail()">추가</button>
+          </div>
+
+          <!-- 담당자 이메일 안내 -->
+          <div style="margin-top:16px;padding:12px 14px;background:#EEF4FF;border-radius:10px;font-size:12px;color:#1D4ED8;line-height:1.7;">
+            💡 <b>담당자</b>는 별도 등록 불필요 — 👤 담당자 관리 탭에서 이메일 입력 시 자동 허용됩니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ API 가이드 (토글) -->
+      <div style="margin-top:24px;">
+        <button class="conn-guide-toggle" onclick="toggleSetupGuide()">
+          <span>📖 Google Calendar API 설정 가이드</span>
+          <span id="guide-arrow">▼</span>
+        </button>
+        <div id="gcal-setup-guide" style="display:none;margin-top:12px;">
+          <div class="card" style="margin:0;">
+            <div class="gcal-steps">
+              <div class="gcal-step">
+                <div class="step-num">1</div>
+                <div class="step-body">
+                  <div class="step-title">Google Cloud Console 프로젝트 생성</div>
+                  <div class="step-desc"><a href="https://console.cloud.google.com/" target="_blank" class="step-link">console.cloud.google.com</a> → 새 프로젝트 → 이름 입력(예: playtag) → 만들기</div>
+                </div>
+              </div>
+              <div class="gcal-step">
+                <div class="step-num">2</div>
+                <div class="step-body">
+                  <div class="step-title">Google Calendar API 활성화</div>
+                  <div class="step-desc">API 및 서비스 → 라이브러리 → "Google Calendar API" 검색 → 사용 설정</div>
+                </div>
+              </div>
+              <div class="gcal-step">
+                <div class="step-num">3</div>
+                <div class="step-body">
+                  <div class="step-title">OAuth 동의 화면 설정</div>
+                  <div class="step-desc">외부 선택 → 앱 이름·이메일 입력 → 범위에 <code style="background:#F3F4F6;padding:1px 5px;border-radius:4px;">.../auth/calendar</code> 추가 → 테스트 사용자 추가</div>
+                </div>
+              </div>
+              <div class="gcal-step">
+                <div class="step-num">4</div>
+                <div class="step-body">
+                  <div class="step-title">OAuth 2.0 클라이언트 ID 발급</div>
+                  <div class="step-desc">사용자 인증 정보 → OAuth 클라이언트 ID → 웹 애플리케이션 → 승인된 JS 출처에 <code style="background:#F3F4F6;padding:1px 5px;border-radius:4px;">https://[내아이디].github.io</code> 입력 → 클라이언트 ID 복사</div>
+                </div>
+              </div>
+              <div class="gcal-step">
+                <div class="step-num">5</div>
+                <div class="step-body">
+                  <div class="step-title">위 ⚙️ API 설정 카드에 붙여넣기</div>
+                  <div class="step-desc">복사한 Client ID를 위 입력란에 붙여넣고 적용 버튼을 클릭합니다. gcal.js 파일의 CLIENT_ID도 동일하게 수정해주세요.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /page-gcal-settings -->
+</div><!-- /app -->
+
+
+<!-- ════════════════════════════════════════
+     MODALS
+════════════════════════════════════════ -->
+
+<!-- 배정 모달 -->
+<div class="modal-overlay" id="modal-assign">
+  <div class="modal modal-xl">
+    <button class="modal-close" onclick="closeModal('modal-assign')">✕</button>
+    <div class="modal-title">📅 일시 &amp; 담당자 배정</div>
+    <div class="assign-info-box" id="assign-app-info"></div>
+
+    <div class="section-title">
+      확정 일시 선택
+      <span class="sub" style="color:var(--pt-danger);"> * 필수</span>
+    </div>
+    <div class="date-slots" id="assign-date-slots" style="margin-bottom:16px;"></div>
+
+    <div class="form-group" style="margin-bottom:20px;">
+      <label class="form-label">직접 입력 (신청 일시 외 다른 일시 배정 시)</label>
+      <input type="datetime-local" class="form-control" id="assign-custom-date" oninput="selectCustomDate()">
+    </div>
+
+    <div class="section-title">
+      담당자 배정
+      <span class="sub" style="color:var(--pt-danger);"> * 필수</span>
+    </div>
+    <div class="assign-grid" id="assign-staff-grid"></div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost"  onclick="closeModal('modal-assign')">취소</button>
+      <button class="btn btn-danger" onclick="rejectApp()">❌ 반려</button>
+      <button class="btn btn-primary" onclick="confirmAssign()">✅ 배정 확정</button>
+    </div>
+  </div>
+</div>
+
+<!-- 이벤트 상세 모달 -->
+<div class="modal-overlay" id="modal-event">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-event')">✕</button>
+    <div class="modal-title" id="event-modal-title">일정 상세</div>
+    <div id="event-modal-body"></div>
+    <div class="modal-footer" id="event-modal-actions"></div>
+  </div>
+</div>
+
+<!-- 담당자 등록/수정 모달 -->
+<div class="modal-overlay" id="modal-staff">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-staff')">✕</button>
+    <div class="modal-title" id="staff-modal-title">👤 담당자 등록</div>
+    <input type="hidden" id="staff-edit-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">이름</label>
+        <input class="form-control" type="text" id="sm-name" placeholder="이름">
+      </div>
+      <div class="form-group">
+        <label class="form-label">역할/직책</label>
+        <input class="form-control" type="text" id="sm-role" placeholder="예: 교육 전문가">
+      </div>
+      <div class="form-group">
+        <label class="form-label">연락처</label>
+        <input class="form-control" type="text" id="sm-tel" placeholder="010-0000-0000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">이메일</label>
+        <input class="form-control" type="email" id="sm-email" placeholder="example@playtag.ai">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">담당 프로그램</label>
+        <div id="sm-prog-checks" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;"><input type="checkbox" value="교사교육"> 교사교육</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;"><input type="checkbox" value="부모교육"> 부모교육</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;"><input type="checkbox" value="OT"> OT</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;"><input type="checkbox" value="설명회"> 설명회</label>
+        </div>
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">프로필 색상</label>
+        <div class="color-swatch-row">
+          <div class="color-swatch selected" style="background:#1A6BFF;" data-color="#1A6BFF" onclick="selectColor(this,'#1A6BFF')"></div>
+          <div class="color-swatch"          style="background:#10B981;" data-color="#10B981" onclick="selectColor(this,'#10B981')"></div>
+          <div class="color-swatch"          style="background:#8B5CF6;" data-color="#8B5CF6" onclick="selectColor(this,'#8B5CF6')"></div>
+          <div class="color-swatch"          style="background:#F59E0B;" data-color="#F59E0B" onclick="selectColor(this,'#F59E0B')"></div>
+          <div class="color-swatch"          style="background:#EF4444;" data-color="#EF4444" onclick="selectColor(this,'#EF4444')"></div>
+          <div class="color-swatch"          style="background:#06B6D4;" data-color="#06B6D4" onclick="selectColor(this,'#06B6D4')"></div>
+          <div class="color-swatch"          style="background:#EC4899;" data-color="#EC4899" onclick="selectColor(this,'#EC4899')"></div>
+          <div class="color-swatch"          style="background:#F97316;" data-color="#F97316" onclick="selectColor(this,'#F97316')"></div>
+        </div>
+        <input type="hidden" id="sm-color" value="#1A6BFF">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">메모</label>
+        <textarea class="form-control" id="sm-note" placeholder="담당자에 대한 메모" style="min-height:60px;"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost"   onclick="closeModal('modal-staff')">취소</button>
+      <button class="btn btn-primary" onclick="saveStaff()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 삭제 확인 모달 -->
+<div class="modal-overlay" id="modal-confirm-delete">
+  <div class="modal modal-sm">
+    <div class="modal-title" style="font-size:16px;">⚠️ 담당자 삭제</div>
+    <p id="confirm-delete-msg" style="font-size:14px;color:var(--pt-gray);margin-bottom:24px;line-height:1.6;"></p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost"  onclick="closeModal('modal-confirm-delete')">취소</button>
+      <button class="btn btn-danger" onclick="confirmDeleteStaff()">삭제</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 회원가입 모달 -->
+<div class="modal-overlay" id="modal-signup">
+  <div class="modal modal-sm">
+    <button class="modal-close" onclick="closeModal('modal-signup')">✕</button>
+    <div class="modal-title">🔐 회원가입</div>
+
+    <!-- 오류 메시지 -->
+    <div id="su-error" style="display:none;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+      padding:10px 14px;font-size:13px;color:var(--pt-danger);margin-bottom:14px;white-space:pre-line;"></div>
+
+    <!-- STEP 1: 본인 확인 -->
+    <div id="su-step1">
+      <p style="font-size:13px;color:var(--pt-gray);margin-bottom:16px;line-height:1.7;">
+        관리자가 사전 등록한 <b>연락처</b>와 <b>사업자등록번호</b>를 입력하면<br>본인 확인 후 아이디/비밀번호를 설정할 수 있습니다.
+      </p>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" style="color:var(--pt-gray);">연락처</label>
+        <input class="form-control" type="text" id="su-tel" placeholder="010-0000-0000"
+          onkeydown="if(event.key==='Enter') signupStep1()">
+      </div>
+      <div class="form-group" style="margin-bottom:20px;">
+        <label class="form-label" style="color:var(--pt-gray);">사업자등록번호</label>
+        <input class="form-control" type="text" id="su-biz" placeholder="10자리 숫자 (하이픈 없이 가능)"
+          onkeydown="if(event.key==='Enter') signupStep1()">
+      </div>
+    </div>
+
+    <!-- STEP 2: ID/PW 설정 (본인 확인 통과 후 표시) -->
+    <div id="su-step2" style="display:none;">
+      <div id="su-user-info"></div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" style="color:var(--pt-gray);">사용할 아이디 <span style="color:var(--pt-danger);">*</span></label>
+        <input class="form-control" type="text" id="su-id" placeholder="4자 이상"
+          onkeydown="if(event.key==='Enter') signupStep2()">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" style="color:var(--pt-gray);">비밀번호 <span style="color:var(--pt-danger);">*</span></label>
+        <input class="form-control" type="password" id="su-pw" placeholder="6자 이상"
+          onkeydown="if(event.key==='Enter') signupStep2()">
+      </div>
+      <div class="form-group" style="margin-bottom:20px;">
+        <label class="form-label" style="color:var(--pt-gray);">비밀번호 확인 <span style="color:var(--pt-danger);">*</span></label>
+        <input class="form-control" type="password" id="su-pw2" placeholder="비밀번호 재입력"
+          onkeydown="if(event.key==='Enter') signupStep2()">
+      </div>
+    </div>
+
+    <input type="hidden" id="su-verified-id">
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-signup')">취소</button>
+      <button class="btn btn-primary" id="su-step1-btn" onclick="signupStep1()">본인 확인</button>
+      <button class="btn btn-primary" id="su-step2-btn" style="display:none;" onclick="signupStep2()">🎉 가입 완료</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 퍼포먼스 데이터 입력 모달 -->
+<div class="modal-overlay" id="modal-data-entry">
+  <div class="modal modal-xl">
+    <button class="modal-close" onclick="closeModal('modal-data-entry')">✕</button>
+    <div class="modal-title">📝 프로그램 결과 데이터 입력</div>
+    <input type="hidden" id="de-edit-id">
+
+    <div class="form-grid">
+      <!-- 신청 건 선택 -->
+      <div class="form-group form-full">
+        <label class="form-label">연결된 신청 건 <span style="color:var(--pt-gray);font-size:11px;">(선택사항 - 확정된 신청과 연결)</span></label>
+        <select class="form-control" id="de-app-select" onchange="onDeAppSelect()">
+          <option value="">직접 입력</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">프로그램 *</label>
+        <select class="form-control" id="de-program">
+          <option value="">선택</option>
+          <option>교사교육</option><option>부모교육</option><option>OT</option><option>설명회</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">지사 *</label>
+        <select class="form-control" id="de-branch">
+          <option value="">선택</option>
+          <option>서울 강남지사</option><option>서울 강북지사</option>
+          <option>경기 수원지사</option><option>경기 성남지사</option>
+          <option>부산 해운대지사</option><option>대구 수성지사</option>
+          <option>인천 남동지사</option><option>광주 서구지사</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">담당자 *</label>
+        <select class="form-control" id="de-staff"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">진행일 *</label>
+        <input class="form-control" type="date" id="de-date">
+      </div>
+
+      <!-- 참가 인원 -->
+      <div class="form-group form-full">
+        <label class="form-label" style="margin-bottom:10px;">실제 참가 인원 (유형별 입력)</label>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <div>
+            <label style="font-size:12px;color:var(--pt-gray);display:block;margin-bottom:4px;">👨‍👩‍👧 학부모</label>
+            <input class="form-control" type="number" id="de-parent" placeholder="0" min="0" oninput="updateDeTotal()">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--pt-gray);display:block;margin-bottom:4px;">👩‍🏫 선생님</label>
+            <input class="form-control" type="number" id="de-teacher" placeholder="0" min="0" oninput="updateDeTotal()">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--pt-gray);display:block;margin-bottom:4px;">🏫 원장</label>
+            <input class="form-control" type="number" id="de-director" placeholder="0" min="0" oninput="updateDeTotal()">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--pt-gray);display:block;margin-bottom:4px;">👤 기타</label>
+            <input class="form-control" type="number" id="de-other" placeholder="0" min="0" oninput="updateDeTotal()">
+          </div>
+        </div>
+        <div style="margin-top:10px;padding:10px 14px;background:var(--pt-gray-light);border-radius:8px;font-size:13px;display:flex;align-items:center;gap:8px;">
+          총 참가인원: <b id="de-total" style="font-size:16px;color:var(--pt-blue);">0</b>명
+        </div>
+      </div>
+
+      <!-- 만족도 -->
+      <div class="form-group">
+        <label class="form-label">만족도 (1~5점)</label>
+        <div class="star-rating" id="de-stars">
+          <span class="star" onclick="setStars(1)">★</span>
+          <span class="star" onclick="setStars(2)">★</span>
+          <span class="star" onclick="setStars(3)">★</span>
+          <span class="star" onclick="setStars(4)">★</span>
+          <span class="star" onclick="setStars(5)">★</span>
+        </div>
+        <input type="hidden" id="de-satisfaction" value="0">
+      </div>
+
+      <!-- 진행 결과 -->
+      <div class="form-group">
+        <label class="form-label">진행 결과</label>
+        <select class="form-control" id="de-result">
+          <option value="완료">완료</option>
+          <option value="취소">취소</option>
+          <option value="연기">연기</option>
+        </select>
+      </div>
+
+      <!-- 특이사항 -->
+      <div class="form-group form-full">
+        <label class="form-label">특이사항 / 메모</label>
+        <textarea class="form-control" id="de-note" placeholder="특이사항, 현장 피드백, 개선점 등 자유롭게 입력하세요" style="min-height:80px;"></textarea>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-data-entry')">취소</button>
+      <button class="btn btn-primary" onclick="saveDataEntry()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Google 캘린더 연동 모달 (Flex 스타일) -->
+<div class="modal-overlay" id="modal-gcal-connect">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-gcal-connect')">✕</button>
+
+    <!-- 헤더 -->
+    <div class="gcal-modal-header">
+      <img src="https://www.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png" width="40" height="40" alt="">
+      <div class="gcal-modal-header-title">구글 캘린더 연동</div>
+    </div>
+    <div class="gcal-modal-subtitle">PlayTag에 등록되는 교육 일정을 Google 캘린더로 확인할 수 있어요.</div>
+
+    <!-- 항목 1: 교육 일정 캘린더 -->
+    <div class="gcal-modal-item">
+      <div class="gcal-modal-item-info">
+        <div class="gcal-modal-item-name">
+          교육 일정 캘린더
+          <span class="gcal-syncing-badge" id="modal-sync-badge" style="display:none;">연동 중</span>
+        </div>
+        <div class="gcal-modal-item-meta" id="modal-sync-meta">배정 확정된 교육 일정이 Google 캘린더에 자동 등록됩니다.</div>
+      </div>
+      <div class="gcal-modal-item-action" id="modal-sync-action">
+        <!-- JS로 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 항목 2: 전체 동기화 -->
+    <div class="gcal-modal-item">
+      <div class="gcal-modal-item-info">
+        <div class="gcal-modal-item-name">전체 일괄 동기화</div>
+        <div class="gcal-modal-item-meta">기존 확정 일정을 Google 캘린더에 한 번에 반영합니다.</div>
+      </div>
+      <div class="gcal-modal-item-action">
+        <button class="btn-connect-item" id="modal-sync-all-btn" onclick="gcalSyncAll()" style="display:none;">
+          🔄 동기화 실행 ›
+        </button>
+        <span id="modal-sync-all-off" style="font-size:13px;color:#CBD5E1;">연결 후 사용 가능</span>
+      </div>
+    </div>
+
+    <!-- 동기화 진행바 -->
+    <div id="gcal-sync-progress" style="display:none;padding:12px 0;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <span id="gcal-sync-progress-text" style="font-size:12px;color:var(--pt-gray);">동기화 중...</span>
+      </div>
+      <div style="height:6px;background:var(--pt-border);border-radius:3px;overflow:hidden;">
+        <div id="gcal-sync-progress-fill" style="height:100%;background:linear-gradient(90deg,var(--pt-blue),var(--pt-cyan));border-radius:3px;width:0%;transition:width .3s;"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 알림 토스트 -->
+<div class="notif" id="notif" role="alert" aria-live="polite">
+  <span id="notif-icon">✅</span>
+  <span id="notif-msg"></span>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<!-- Google API 라이브러리 (비동기 로드) -->
+<script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
+<!-- PlayTag 스크립트 (gcal.js → app.js 순서로 로드) -->
+<script src="gcal.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
