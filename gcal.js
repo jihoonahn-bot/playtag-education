@@ -19,7 +19,7 @@
 // ════════════════════════════════════════
 const GCAL_CONFIG = {
   // Google Cloud Console > API 및 서비스 > 사용자 인증 정보 > OAuth 2.0 클라이언트 ID
-  CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
+  CLIENT_ID: '1004683966460-76forsdrbvjuoucuat7v91mdjnhkunii.apps.googleusercontent.com',
 
   // Google Calendar API 전체 읽기/쓰기 권한
   SCOPES: 'https://www.googleapis.com/auth/calendar',
