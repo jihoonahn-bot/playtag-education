@@ -1,6 +1,6 @@
 /* ══════════════════════════════════════
    PlayTag 교육·설명회 신청 관리 시스템
-   app.js  v3
+   app.js  v4 (Security Hardened)
    - localStorage 영속성: 파일 수정/재배포해도 데이터 유지
    - 신청자 회원가입 플로우 (연락처+사업자번호 → ID/PW 설정)
 ══════════════════════════════════════ */
@@ -8,6 +8,186 @@
 'use strict';
 
 // ════════════════════════════════════════
+
+// ════════════════════════════════════════
+// 🔒 SECURITY MODULE — PlayTag v4
+// ════════════════════════════════════════
+const Security = (() => {
+  'use strict';
+
+  // ── 1. XSS 방지: HTML 이스케이프 ──
+  const _esc_map = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":"&#x27;", '/':'&#x2F;', '`':'&#x60;' };
+  function esc(str) {
+    if (str == null) return '';
+    return String(str).replace(/[&<>"'`/]/g, c => _esc_map[c]);
+  }
+
+  // ── 2. 입력값 검증 ──
+  const Validate = {
+    text(v, max = 200) {
+      if (typeof v !== 'string') return '';
+      return v.trim().slice(0, max);
+    },
+    number(v, min = 0, max = 99999) {
+      const n = Number(v);
+      if (!isFinite(n)) return 0;
+      return Math.min(max, Math.max(min, Math.floor(n)));
+    },
+    date(v) {
+      if (typeof v !== 'string') return '';
+      return /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : '';
+    },
+    id(v) {
+      if (typeof v !== 'string') return '';
+      return v.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 64);
+    },
+    email(v) {
+      if (typeof v !== 'string') return '';
+      const clean = v.trim().slice(0, 254);
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) ? clean : '';
+    },
+    phone(v) {
+      if (typeof v !== 'string') return '';
+      return v.replace(/[^0-9\-+\s()]/g, '').slice(0, 20);
+    },
+  };
+
+  // ── 3. Rate Limiter (로그인 브루트포스 방지) ──
+  const _rateBuckets = {};
+  function rateLimit(key, maxAttempts = 5, windowMs = 60000) {
+    const now = Date.now();
+    if (!_rateBuckets[key]) _rateBuckets[key] = { count: 0, resetAt: now + windowMs };
+    const b = _rateBuckets[key];
+    if (now > b.resetAt) { b.count = 0; b.resetAt = now + windowMs; }
+    b.count++;
+    if (b.count > maxAttempts) {
+      const remaining = Math.ceil((b.resetAt - now) / 1000);
+      return { blocked: true, remaining };
+    }
+    return { blocked: false, remaining: maxAttempts - b.count };
+  }
+  function resetRate(key) { delete _rateBuckets[key]; }
+
+  // ── 4. CSRF 토큰 (세션 단위) ──
+  let _csrfToken = null;
+  function getCsrfToken() {
+    if (!_csrfToken) {
+      const arr = new Uint8Array(16);
+      crypto.getRandomValues(arr);
+      _csrfToken = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+    return _csrfToken;
+  }
+  function verifyCsrf(token) { return token === _csrfToken; }
+
+  // ── 5. 세션 타임아웃 (30분 무활동 자동 로그아웃) ──
+  const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+  let _lastActivity = Date.now();
+  let _sessionTimer = null;
+
+  function touchSession() { _lastActivity = Date.now(); }
+  function startSessionWatchdog(logoutFn) {
+    if (_sessionTimer) clearInterval(_sessionTimer);
+    _sessionTimer = setInterval(() => {
+      if (Date.now() - _lastActivity > SESSION_TIMEOUT_MS) {
+        clearInterval(_sessionTimer);
+        logoutFn('세션이 만료되었습니다. 다시 로그인해주세요.');
+      }
+    }, 60000); // 1분마다 체크
+  }
+  function stopSessionWatchdog() {
+    if (_sessionTimer) { clearInterval(_sessionTimer); _sessionTimer = null; }
+  }
+
+  // ── 6. localStorage 데이터 무결성 (간단한 체크섬) ──
+  function safeLoad(key, fallback = []) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      // 배열/객체 타입 검증
+      if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback;
+      return parsed;
+    } catch(e) {
+      console.warn(`[Security] localStorage 파싱 실패 (${key}):`, e.message);
+      return fallback;
+    }
+  }
+  function safeSave(key, data) {
+    try {
+      const serialized = JSON.stringify(data);
+      // 저장 용량 제한 (5MB 초과 방지)
+      if (serialized.length > 5 * 1024 * 1024) {
+        console.warn(`[Security] 저장 데이터 초과 (${key})`);
+        return false;
+      }
+      localStorage.setItem(key, serialized);
+      return true;
+    } catch(e) {
+      console.warn(`[Security] localStorage 저장 실패 (${key}):`, e.message);
+      return false;
+    }
+  }
+
+  // ── 7. 비밀번호 해시 (SHA-256 기반, 소금 포함) ──
+  async function hashPassword(pw, salt = null) {
+    if (!salt) {
+      const arr = new Uint8Array(16);
+      crypto.getRandomValues(arr);
+      salt = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+    const encoder = new TextEncoder();
+    const data = encoder.encode(salt + pw + 'playtag_pepper_2024');
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2,'0')).join('');
+    return { hash: hashHex, salt };
+  }
+  async function verifyPassword(pw, storedHash, salt) {
+    const { hash } = await hashPassword(pw, salt);
+    return hash === storedHash;
+  }
+
+  // ── 8. 출력 로그 (개발자 콘솔 정보 노출 최소화) ──
+  function secureLog(msg, level = 'info') {
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      console[level](`[PlayTag] ${msg}`);
+    }
+    // 프로덕션에서는 민감 정보 로그 차단
+  }
+
+  // ── 9. DOM 기반 XSS 방지: 안전한 텍스트 삽입 ──
+  function setText(el_or_id, text) {
+    const el = typeof el_or_id === 'string' ? document.getElementById(el_or_id) : el_or_id;
+    if (el) el.textContent = text ?? '';
+  }
+  function setAttr(el_or_id, attr, value) {
+    const el = typeof el_or_id === 'string' ? document.getElementById(el_or_id) : el_or_id;
+    if (el) el.setAttribute(attr, esc(value ?? ''));
+  }
+
+  // ── 10. 클릭재킹 방지 (iframe 내 로드 감지) ──
+  function checkFraming() {
+    if (window.top !== window.self) {
+      document.body.innerHTML = '<p style="color:red;text-align:center;padding:40px">보안 오류: 허용되지 않은 프레임 접근이 감지되었습니다.</p>';
+      throw new Error('[Security] Clickjacking attempt detected');
+    }
+  }
+
+  return { esc, Validate, rateLimit, resetRate, getCsrfToken, verifyCsrf,
+           touchSession, startSessionWatchdog, stopSessionWatchdog,
+           safeLoad, safeSave, hashPassword, verifyPassword,
+           secureLog, setText, setAttr, checkFraming };
+})();
+
+// 클릭재킹 즉시 체크
+Security.checkFraming();
+
+// 모든 사용자 인터랙션에서 세션 갱신
+['click','keydown','mousemove','touchstart'].forEach(evt =>
+  document.addEventListener(evt, () => Security.touchSession(), { passive: true })
+);
+
 // ① localStorage 영속 스토어
 //
 //  ※ STORE_VERSION 을 올리면 샘플 데이터가 한 번 재주입됩니다.
@@ -54,12 +234,10 @@ function initStore() {
 }
 
 function _load(key, fallback = []) {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
-  catch { return fallback; }
+  return Security.safeLoad(key, fallback);
 }
 function _save(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); }
-  catch(e) { console.warn('localStorage 저장 실패:', e); }
+  Security.safeSave(key, data);
 }
 
 // ── 메모리 변수 (항상 localStorage와 동기화) ──
@@ -118,34 +296,52 @@ function setLoginType(type) {
 
 function loginAs(role) {
   if (role === 'admin') {
-    const savedPw = localStorage.getItem('pt_admin_pw') || 'admin1234';
-    if (val('la-id') !== 'admin' || val('la-pw') !== savedPw) {
-      showNotif('관리자 ID 또는 비밀번호가 올바르지 않습니다.', 'danger'); return;
+    // 🔒 Rate Limiting: 5회 실패 시 60초 잠금
+    const inputId = Security.Validate.text(val('la-id'), 50);
+    const rl = Security.rateLimit('admin_login', 5, 60000);
+    if (rl.blocked) {
+      showNotif(`⛔ 로그인 시도 초과. 잠시 후 다시 시도해주세요.`, 'danger'); return;
     }
+    const savedPw = localStorage.getItem('pt_admin_pw') || 'admin1234';
+    const inputPw = Security.Validate.text(val('la-pw'), 100);
+    if (inputId !== 'admin' || inputPw !== savedPw) {
+      showNotif(`관리자 ID 또는 비밀번호가 올바르지 않습니다. (남은 시도: ${rl.remaining}회)`, 'danger'); return;
+    }
+    Security.resetRate('admin_login');
     state.currentUser = { id: 'admin', name: '관리자', branch: '본사', role: 'admin' };
     state.currentRole = 'admin';
 
   } else {
-    const loginId = val('l-id').trim();
-    const loginPw = val('l-pw').trim();
+    // 🔒 Rate Limiting: 10회 실패 시 120초 잠금
+    const loginId = Security.Validate.text(val('l-id'), 50);
+    const loginPw = Security.Validate.text(val('l-pw'), 100);
     if (!loginId || !loginPw) {
       showNotif('아이디와 비밀번호를 입력해주세요.', 'danger'); return;
     }
+    const rl = Security.rateLimit('user_login_' + loginId, 10, 120000);
+    if (rl.blocked) {
+      showNotif(`⛔ 로그인 시도 초과. 잠시 후 다시 시도해주세요.`, 'danger'); return;
+    }
     const user = applicants.find(a => a.registered && a.loginId === loginId && a.loginPw === loginPw);
     if (!user) {
-      showNotif('아이디 또는 비밀번호가 올바르지 않습니다.\n아직 가입하지 않았다면 회원가입을 눌러주세요.', 'danger'); return;
+      showNotif(`아이디 또는 비밀번호가 올바르지 않습니다. (남은 시도: ${rl.remaining}회)`, 'danger'); return;
     }
-    state.currentUser = { id: user.id, loginId: user.loginId, name: user.name, branch: user.branch, role: 'applicant' };
+    Security.resetRate('user_login_' + loginId);
+    state.currentUser = { id: user.id, loginId: user.loginId, name: Security.Validate.text(user.name,50), branch: Security.Validate.text(user.branch,100), role: 'applicant' };
     state.currentRole = 'applicant';
   }
 
   el('login-screen').style.display = 'none';
   el('app').style.display = 'block';
+  // 🔒 세션 감시 시작 (30분 무활동 자동 로그아웃)
+  Security.startSessionWatchdog((msg) => { logout(); setTimeout(() => showNotif(msg, 'danger'), 200); });
   setupNav();
-  showNotif(`${state.currentUser.name}님, 환영합니다 👋`, 'success');
+  showNotif(`${Security.esc(state.currentUser.name)}님, 환영합니다 👋`, 'success');
 }
 
 function logout() {
+  // 🔒 세션 감시 중지
+  Security.stopSessionWatchdog();
   state.currentUser = null;
   state.currentRole = null;
   el('login-screen').style.display = 'flex';
@@ -916,6 +1112,44 @@ function renderPerfPage() {
 }
 
 // ════════════════════════════════════════
+// 차트 타입 상태 저장 & 동적 변환 엔진
+// ════════════════════════════════════════
+const _chartTypes = {};  // { chartId: selectedType }
+
+/** 차트 타입 변경 핸들러 */
+function changeChartType(chartId, renderFn, newType) {
+  _chartTypes[chartId] = newType;
+  window[renderFn]();
+}
+
+/** Chart.js options — Y축/R축 자동 비율 공통 옵션 */
+function _autoScaleOptions(extra = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      y: { beginAtZero: true, ticks: { maxTicksLimit: 8 } },
+      ...(extra.scales || {})
+    },
+    ...extra
+  };
+}
+
+/** 단순 타입 변환 헬퍼 (bar/line/doughnut/pie/radar/polarArea/scatter/bubble) */
+function _resolveType(id, fallback) {
+  const t = _chartTypes[id] || fallback;
+  // bar_h, bar_stacked, bar_h_stacked, area는 내부 처리
+  if (['bar_h','bar_stacked','bar_h_stacked','area','mixed'].includes(t)) return 'bar';
+  return t;
+}
+
+function _isHorizontal(id)   { return ['bar_h','bar_h_stacked'].includes(_chartTypes[id]); }
+function _isStacked(id)      { return ['bar_stacked','bar_h_stacked'].includes(_chartTypes[id]); }
+function _isArea(id)         { return _chartTypes[id] === 'area'; }
+function _isMixed(id)        { return _chartTypes[id] === 'mixed'; }
+
+// ════════════════════════════════════════
 // TAB 1: 종합 현황
 // ════════════════════════════════════════
 function renderPerfOverview() {
@@ -927,31 +1161,63 @@ function renderPerfOverview() {
 }
 
 function _renderProgBar() {
-  _destroyChart('chart-prog-bar');
+  const id = 'chart-prog-bar';
+  _destroyChart(id);
   const progs = ['교사교육','부모교육','OT','설명회'];
   const counts = progs.map(p => applications.filter(a=>a.program===p&&a.status==='confirmed').length);
-  const people = progs.map(p => {
-    const matched = perfData.filter(d=>d.program===p);
-    return matched.reduce((s,d)=>s+(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0), 0);
-  });
-  const ctx = el('chart-prog-bar').getContext('2d');
-  _charts['chart-prog-bar'] = new Chart(ctx, {
+  const people = progs.map(p =>
+    perfData.filter(d=>d.program===p).reduce((s,d)=>s+(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0),0)
+  );
+  const ctx = el(id).getContext('2d');
+  const t = _chartTypes[id] || 'mixed';
+  const isH = _isHorizontal(id);
+
+  if (t === 'mixed') {
+    _charts[id] = new Chart(ctx, {
+      data: {
+        labels: progs,
+        datasets: [
+          { type:'bar', label:'확정 건수', data:counts, backgroundColor:progs.map(p=>PROG_COLORS[p]+'CC'), borderRadius:6, yAxisID:'y' },
+          { type:'line', label:'실 참가인원', data:people, borderColor:'#EF4444', backgroundColor:'rgba(239,68,68,.1)', tension:.4, pointRadius:5, fill:true, yAxisID:'y1' },
+        ]
+      },
+      options: { responsive:true, plugins:{legend:{position:'top'}}, scales:{
+        y:  { beginAtZero:true, position:'left',  title:{display:true,text:'건수'}, ticks:{maxTicksLimit:8} },
+        y1: { beginAtZero:true, position:'right', title:{display:true,text:'인원'}, grid:{drawOnChartArea:false}, ticks:{maxTicksLimit:8} }
+      }}
+    });
+    return;
+  }
+
+  const isPie = ['pie','doughnut','polarArea'].includes(t);
+  const totalByProg = progs.map((_,i) => counts[i] + people[i]);
+
+  if (isPie) {
+    _charts[id] = new Chart(ctx, {
+      type: t,
+      data: { labels: progs, datasets:[{ data: totalByProg, backgroundColor: progs.map(p=>PROG_COLORS[p]+'CC'), borderWidth:2, hoverOffset:8 }] },
+      options: { responsive:true, plugins:{ legend:{position:'right'} }, ...(t==='doughnut'?{cutout:'60%'}:{}) }
+    });
+    return;
+  }
+
+  const isArea = _isArea(id);
+  _charts[id] = new Chart(ctx, {
+    type: t === 'bar' || isH ? 'bar' : t,
     data: {
       labels: progs,
       datasets: [
-        { type:'bar', label:'확정 건수', data: counts, backgroundColor: progs.map(p=>PROG_COLORS[p]+'CC'), borderRadius: 6, yAxisID:'y' },
-        { type:'line', label:'실 참가인원', data: people, borderColor:'#EF4444', backgroundColor:'rgba(239,68,68,.1)', tension:.4, pointRadius:5, fill:true, yAxisID:'y1' },
+        { label:'확정 건수', data:counts, backgroundColor:progs.map(p=>PROG_COLORS[p]+'CC'), borderColor:progs.map(p=>PROG_COLORS[p]), borderRadius:6, tension:.4, fill:isArea, pointRadius:4 },
+        ...(t==='line'||isArea ? [{ label:'실 참가인원', data:people, borderColor:'#EF4444', backgroundColor:'rgba(239,68,68,.15)', tension:.4, fill:isArea, pointRadius:4 }] : [])
       ]
     },
-    options: { responsive:true, plugins:{ legend:{position:'top'} }, scales:{
-      y:  { beginAtZero:true, position:'left',  title:{display:true,text:'건수'} },
-      y1: { beginAtZero:true, position:'right', title:{display:true,text:'인원'}, grid:{drawOnChartArea:false} }
-    }}
+    options: { ..._autoScaleOptions(), indexAxis: isH ? 'y' : 'x' }
   });
 }
 
 function _renderTypeDonut() {
-  _destroyChart('chart-type-donut');
+  const id = 'chart-type-donut';
+  _destroyChart(id);
   const labels = ['학부모','선생님','원장','기타'];
   const data = [
     perfData.reduce((s,d)=>s+(Number(d.parent)||0),0),
@@ -959,33 +1225,64 @@ function _renderTypeDonut() {
     perfData.reduce((s,d)=>s+(Number(d.director)||0),0),
     perfData.reduce((s,d)=>s+(Number(d.other)||0),0),
   ];
-  const ctx = el('chart-type-donut').getContext('2d');
-  _charts['chart-type-donut'] = new Chart(ctx, {
-    type: 'doughnut',
-    data: { labels, datasets:[{ data, backgroundColor:TYPE_COLORS, borderWidth:2, hoverOffset:8 }] },
-    options: { responsive:true, cutout:'65%', plugins:{ legend:{position:'right'} } }
-  });
+  const ctx = el(id).getContext('2d');
+  const t = _chartTypes[id] || 'doughnut';
+  const isPie = ['pie','doughnut','polarArea'].includes(t);
+  const isH = _isHorizontal(id);
+
+  if (isPie) {
+    _charts[id] = new Chart(ctx, {
+      type: t,
+      data: { labels, datasets:[{ data, backgroundColor:TYPE_COLORS, borderWidth:2, hoverOffset:8 }] },
+      options: { responsive:true, plugins:{legend:{position:'right'}}, ...(t==='doughnut'?{cutout:'65%'}:{}) }
+    });
+  } else {
+    _charts[id] = new Chart(ctx, {
+      type: isH ? 'bar' : t,
+      data: { labels, datasets:[{ label:'참가자 수', data, backgroundColor:TYPE_COLORS, borderRadius:6 }] },
+      options: { ..._autoScaleOptions(), indexAxis: isH ? 'y' : 'x' }
+    });
+  }
 }
 
 function _renderMonthlyLine() {
-  _destroyChart('chart-monthly-line');
+  const id = 'chart-monthly-line';
+  _destroyChart(id);
   const months = [];
   for (let i=5; i>=0; i--) {
     const d = new Date(); d.setMonth(d.getMonth()-i);
     months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
   }
   const labels = months.map(m => m.replace('-','.'));
-  const datasets = ['교사교육','부모교육','OT','설명회'].map(prog => ({
+  const progs = ['교사교육','부모교육','OT','설명회'];
+  const t = _chartTypes[id] || 'line';
+  const isH = _isHorizontal(id);
+  const isStacked = _isStacked(id);
+  const isArea = _isArea(id);
+  const chartType = (t==='bar'||t==='bar_stacked'||isH) ? 'bar' : 'line';
+
+  const datasets = progs.map(prog => ({
     label: prog,
     data: months.map(m => applications.filter(a=>a.program===prog&&a.appliedAt?.startsWith(m)).length),
-    borderColor: PROG_COLORS[prog], backgroundColor: PROG_COLORS[prog]+'22',
-    tension: .4, fill: true, pointRadius: 4,
+    borderColor: PROG_COLORS[prog],
+    backgroundColor: PROG_COLORS[prog] + (isArea||isStacked ? '66' : '22'),
+    tension: .4, fill: isArea || isStacked, pointRadius: 4,
+    borderRadius: 6,
   }));
-  const ctx = el('chart-monthly-line').getContext('2d');
-  _charts['chart-monthly-line'] = new Chart(ctx, {
-    type: 'line',
+
+  const ctx = el(id).getContext('2d');
+  _charts[id] = new Chart(ctx, {
+    type: chartType,
     data: { labels, datasets },
-    options: { responsive:true, plugins:{ legend:{position:'top'} }, scales:{ y:{ beginAtZero:true } } }
+    options: {
+      ..._autoScaleOptions({
+        scales: {
+          y: { beginAtZero:true, stacked: isStacked, ticks:{maxTicksLimit:8} },
+          x: { stacked: isStacked }
+        }
+      }),
+      indexAxis: isH ? 'y' : 'x'
+    }
   });
 }
 
@@ -1082,27 +1379,31 @@ function setStars(n) {
 }
 
 function saveDataEntry() {
-  const program = val('de-program'), branch = val('de-branch');
+  const program = Security.Validate.text(val('de-program'), 50);
+  const branch  = Security.Validate.text(val('de-branch'), 100);
   if (!program) { showNotif('프로그램을 선택해주세요','danger'); return; }
   if (!branch)  { showNotif('지사를 선택해주세요','danger'); return; }
-  if (!val('de-date')) { showNotif('진행일을 입력해주세요','danger'); return; }
+  const dateVal = Security.Validate.date(val('de-date'));
+  if (!dateVal) { showNotif('진행일을 입력해주세요','danger'); return; }
 
-  const staffId = val('de-staff');
+  const staffId = Security.Validate.id(val('de-staff'));
   const staffObj = STAFF.find(s=>s.id===staffId);
+  // 🔒 입력값 전체 검증 및 범위 제한
   const entry = {
-    id: val('de-edit-id') || 'd'+Date.now(),
-    appId:       val('de-app-select'),
+    id: Security.Validate.id(val('de-edit-id')) || 'd'+Date.now(),
+    appId:       Security.Validate.id(val('de-app-select')),
     program, branch,
     staffId,
-    staffName:   staffObj?.name || '',
-    date:        val('de-date'),
-    parent:      Number(el('de-parent')?.value)||0,
-    teacher:     Number(el('de-teacher')?.value)||0,
-    director:    Number(el('de-director')?.value)||0,
-    other:       Number(el('de-other')?.value)||0,
-    satisfaction:Number(el('de-satisfaction')?.value)||0,
-    result:      val('de-result') || '완료',
-    note:        val('de-note'),
+    staffName:   Security.Validate.text(staffObj?.name || '', 50),
+    date:        dateVal,
+    parent:      Security.Validate.number(el('de-parent')?.value, 0, 9999),
+    teacher:     Security.Validate.number(el('de-teacher')?.value, 0, 9999),
+    director:    Security.Validate.number(el('de-director')?.value, 0, 9999),
+    other:       Security.Validate.number(el('de-other')?.value, 0, 9999),
+    satisfaction:Security.Validate.number(el('de-satisfaction')?.value, 0, 5),
+    result:      Security.Validate.text(val('de-result') || '완료', 20),
+    note:        Security.Validate.text(val('de-note'), 500),
+    place:       Security.Validate.text(val('de-place') || '', 200),
     createdAt:   new Date().toISOString(),
   };
 
@@ -1144,117 +1445,214 @@ function renderPerfCharts() {
 }
 
 function _renderStaffHBar() {
-  _destroyChart('chart-staff-hbar');
-  const data = STAFF.map(s => ({
-    name: s.name,
-    count: applications.filter(a=>a.assignedStaff===s.id&&a.status==='confirmed').length,
-    color: s.color,
+  const id = 'chart-staff-hbar';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'bar_h';
+  const sorted = [...STAFF].map(s => ({
+    name: s.name, color: s.color,
+    count: perfData.filter(d=>d.staffId===s.id).length,
   })).sort((a,b)=>b.count-a.count);
-  const ctx = el('chart-staff-hbar').getContext('2d');
-  _charts['chart-staff-hbar'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: data.map(d=>d.name), datasets:[{ label:'확정 건수', data:data.map(d=>d.count), backgroundColor:data.map(d=>d.color+'CC'), borderRadius:6 }] },
-    options: { indexAxis:'y', responsive:true, plugins:{ legend:{display:false} }, scales:{ x:{ beginAtZero:true } } }
-  });
+
+  const ctx = el(id).getContext('2d');
+  const isPie = ['pie','doughnut','polarArea'].includes(t);
+  if (isPie) {
+    _charts[id] = new Chart(ctx, {
+      type: t,
+      data: { labels: sorted.map(d=>d.name), datasets:[{ data:sorted.map(d=>d.count), backgroundColor:sorted.map(d=>d.color+'CC'), borderWidth:2, hoverOffset:8 }] },
+      options: { responsive:true, plugins:{legend:{position:'right'}}, ...(t==='doughnut'?{cutout:'60%'}:{}) }
+    });
+  } else {
+    const isH = t==='bar_h' || _isHorizontal(id);
+    _charts[id] = new Chart(ctx, {
+      type: t==='line' ? 'line' : 'bar',
+      data: { labels:sorted.map(d=>d.name), datasets:[{ label:'활동 건수', data:sorted.map(d=>d.count), backgroundColor:sorted.map(d=>d.color+'CC'), borderColor:sorted.map(d=>d.color), borderRadius:6, tension:.4, pointRadius:4 }] },
+      options: { ..._autoScaleOptions(), indexAxis: isH ? 'y' : 'x', plugins:{legend:{display:false}} }
+    });
+  }
 }
 
 function _renderRadar() {
-  _destroyChart('chart-radar');
-  const top5 = [...STAFF].map(s => {
-    const apps = applications.filter(a=>a.assignedStaff===s.id&&a.status==='confirmed');
-    const pd   = perfData.filter(d=>d.staffId===s.id);
+  const id = 'chart-radar';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'radar';
+  const staffData = STAFF.map(s => {
+    const pd = perfData.filter(d=>d.staffId===s.id);
     const totalPpl = pd.reduce((sum,d)=>sum+(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0),0);
-    const avgSat   = pd.length ? pd.filter(d=>d.satisfaction>0).reduce((sum,d)=>sum+d.satisfaction,0)/(pd.filter(d=>d.satisfaction>0).length||1) : 0;
-    return { name:s.name, color:s.color, scores:[
-      apps.length * 20,                          // 건수
-      Math.min(100, totalPpl / 5),               // 인원
-      avgSat * 20,                               // 만족도
-      s.progs?.length * 25 || 0,                 // 다양성
-      pd.filter(d=>d.result==='완료').length * 25 // 완주율
-    ]};
-  }).slice(0,5);
-
-  const ctx = el('chart-radar').getContext('2d');
-  _charts['chart-radar'] = new Chart(ctx, {
-    type: 'radar',
-    data: {
-      labels: ['건수','인원','만족도','프로그램 다양성','완주율'],
-      datasets: top5.map(s=>({ label:s.name, data:s.scores, borderColor:s.color, backgroundColor:s.color+'22', pointBackgroundColor:s.color, pointRadius:4 }))
-    },
-    options: { responsive:true, scales:{ r:{ beginAtZero:true, max:100, ticks:{display:false} } }, plugins:{ legend:{position:'right'} } }
+    const avgSat = pd.filter(d=>d.satisfaction>0).length
+      ? pd.filter(d=>d.satisfaction>0).reduce((sum,d)=>sum+d.satisfaction,0)/pd.filter(d=>d.satisfaction>0).length : 0;
+    return { name:s.name, color:s.color, scores:[pd.length*10, Math.min(100,totalPpl/5), avgSat*20, (new Set(pd.map(d=>d.program)).size)*25, pd.filter(d=>d.result==='완료').length*10] };
   });
+  const labels = ['건수','인원','만족도','다양성','완주율'];
+  const ctx = el(id).getContext('2d');
+
+  if (t === 'radar') {
+    _charts[id] = new Chart(ctx, {
+      type: 'radar',
+      data: { labels, datasets: staffData.map(s=>({ label:s.name, data:s.scores, borderColor:s.color, backgroundColor:s.color+'22', pointBackgroundColor:s.color, pointRadius:4 })) },
+      options: { responsive:true, scales:{ r:{ beginAtZero:true, ticks:{display:false} } }, plugins:{legend:{position:'right'}} }
+    });
+  } else {
+    const isH = _isHorizontal(id);
+    _charts[id] = new Chart(ctx, {
+      type: t==='line' ? 'line' : 'bar',
+      data: { labels, datasets: staffData.map(s=>({ label:s.name, data:s.scores, backgroundColor:s.color+'99', borderColor:s.color, tension:.4, pointRadius:4, borderRadius:6 })) },
+      options: { ..._autoScaleOptions(), indexAxis: isH ? 'y' : 'x' }
+    });
+  }
 }
 
 function _renderSatisfaction() {
-  _destroyChart('chart-satisfaction');
+  const id = 'chart-satisfaction';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'bar';
   const progs = ['교사교육','부모교육','OT','설명회'];
   const avgs = progs.map(p => {
-    const relevant = perfData.filter(d=>d.program===p&&d.satisfaction>0);
-    return relevant.length ? (relevant.reduce((s,d)=>s+d.satisfaction,0)/relevant.length).toFixed(2) : 0;
+    const r = perfData.filter(d=>d.program===p&&d.satisfaction>0);
+    return r.length ? +(r.reduce((s,d)=>s+d.satisfaction,0)/r.length).toFixed(2) : 0;
   });
-  const ctx = el('chart-satisfaction').getContext('2d');
-  _charts['chart-satisfaction'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: progs, datasets:[{ label:'평균 만족도', data:avgs, backgroundColor:progs.map(p=>PROG_COLORS[p]+'CC'), borderRadius:8 }] },
-    options: { responsive:true, plugins:{ legend:{display:false} }, scales:{ y:{ min:0, max:5, ticks:{ stepSize:1 } } } }
-  });
+  const ctx = el(id).getContext('2d');
+  const isPie = ['pie','doughnut','polarArea'].includes(t);
+  const isH = _isHorizontal(id);
+
+  if (isPie) {
+    _charts[id] = new Chart(ctx, {
+      type: t,
+      data: { labels:progs, datasets:[{ data:avgs, backgroundColor:progs.map(p=>PROG_COLORS[p]+'CC'), borderWidth:2, hoverOffset:8 }] },
+      options: { responsive:true, plugins:{legend:{position:'right'}}, ...(t==='doughnut'?{cutout:'60%'}:{}) }
+    });
+  } else if (t==='radar') {
+    _charts[id] = new Chart(ctx, {
+      type:'radar',
+      data:{ labels:progs, datasets:[{ label:'평균 만족도', data:avgs, borderColor:'#8B5CF6', backgroundColor:'#8B5CF622', pointBackgroundColor:'#8B5CF6', pointRadius:4 }] },
+      options:{ responsive:true, scales:{ r:{ beginAtZero:true, max:5, ticks:{stepSize:1} } }, plugins:{legend:{display:false}} }
+    });
+  } else {
+    _charts[id] = new Chart(ctx, {
+      type: t==='line' ? 'line' : 'bar',
+      data: { labels:progs, datasets:[{ label:'평균 만족도', data:avgs, backgroundColor:progs.map(p=>PROG_COLORS[p]+'CC'), borderColor:progs.map(p=>PROG_COLORS[p]), borderRadius:8, tension:.4, pointRadius:5, fill:_isArea(id) }] },
+      options: { ..._autoScaleOptions({ scales:{ y:{ min:0, max:5, ticks:{stepSize:1} } } }), indexAxis: isH ? 'y' : 'x' }
+    });
+  }
 }
 
 function _renderStackedType() {
-  _destroyChart('chart-stacked-type');
+  const id = 'chart-stacked-type';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'bar_stacked';
+  const isH = _isHorizontal(id);
+  const isStacked = _isStacked(id) || t==='bar_stacked';
+  const isArea = _isArea(id);
   const staffNames = STAFF.map(s=>s.name);
-  const ctx = el('chart-stacked-type').getContext('2d');
-  _charts['chart-stacked-type'] = new Chart(ctx, {
-    type: 'bar',
+  const ctx = el(id).getContext('2d');
+  const typeNames = ['학부모','선생님','원장','기타'];
+  const keys = ['parent','teacher','director','other'];
+
+  _charts[id] = new Chart(ctx, {
+    type: (t==='line'||isArea) ? 'line' : 'bar',
     data: {
       labels: staffNames,
-      datasets: [
-        { label:'학부모',  data: STAFF.map(s=>perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d.parent)||0),0)), backgroundColor:TYPE_COLORS[0]+'CC' },
-        { label:'선생님',  data: STAFF.map(s=>perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d.teacher)||0),0)), backgroundColor:TYPE_COLORS[1]+'CC' },
-        { label:'원장',    data: STAFF.map(s=>perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d.director)||0),0)), backgroundColor:TYPE_COLORS[2]+'CC' },
-        { label:'기타',    data: STAFF.map(s=>perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d.other)||0),0)), backgroundColor:TYPE_COLORS[3]+'CC' },
-      ]
+      datasets: typeNames.map((name,i) => ({
+        label: name,
+        data: STAFF.map(s=>perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d[keys[i]])||0),0)),
+        backgroundColor: TYPE_COLORS[i]+'CC',
+        borderColor: TYPE_COLORS[i],
+        borderRadius: 6,
+        tension: .4,
+        fill: isArea,
+        pointRadius: 4,
+      }))
     },
-    options: { responsive:true, scales:{ x:{ stacked:true }, y:{ stacked:true, beginAtZero:true } }, plugins:{ legend:{position:'top'} } }
+    options: {
+      ..._autoScaleOptions({
+        scales:{
+          x:{ stacked:isStacked },
+          y:{ beginAtZero:true, stacked:isStacked, ticks:{maxTicksLimit:8} }
+        }
+      }),
+      indexAxis: isH ? 'y' : 'x'
+    }
   });
 }
 
 function _renderBranchPie() {
-  _destroyChart('chart-branch-pie');
-  const branchMap = {};
-  applications.filter(a=>a.status==='confirmed').forEach(a=>{ branchMap[a.branch]=(branchMap[a.branch]||0)+1; });
-  const labels = Object.keys(branchMap);
-  const data   = Object.values(branchMap);
-  const ctx = el('chart-branch-pie').getContext('2d');
-  _charts['chart-branch-pie'] = new Chart(ctx, {
-    type: 'pie',
-    data: { labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>STAFF_PALETTE[i%STAFF_PALETTE.length]+'CC'), borderWidth:2, hoverOffset:10 }] },
-    options: { responsive:true, plugins:{ legend:{position:'right'} } }
+  const id = 'chart-branch-pie';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'pie';
+  // 지사별 데이터: perfData의 place 기반 집계
+  const placeMap = {};
+  perfData.forEach(d => {
+    const key = d.place || d.branch || '기타';
+    placeMap[key] = (placeMap[key]||0) + 1;
   });
+  // 상위 10개만
+  const sorted = Object.entries(placeMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const labels = sorted.map(x=>x[0]);
+  const data   = sorted.map(x=>x[1]);
+  const ctx = el(id).getContext('2d');
+  const isPie = ['pie','doughnut','polarArea'].includes(t);
+  const isH = _isHorizontal(id);
+
+  if (isPie) {
+    _charts[id] = new Chart(ctx, {
+      type: t,
+      data: { labels, datasets:[{ data, backgroundColor:labels.map((_,i)=>STAFF_PALETTE[i%STAFF_PALETTE.length]+'CC'), borderWidth:2, hoverOffset:10 }] },
+      options: { responsive:true, plugins:{legend:{position:'right'}}, ...(t==='doughnut'?{cutout:'60%'}:{}) }
+    });
+  } else {
+    _charts[id] = new Chart(ctx, {
+      type: t==='line' ? 'line' : 'bar',
+      data: { labels, datasets:[{ label:'방문 횟수', data, backgroundColor:labels.map((_,i)=>STAFF_PALETTE[i%STAFF_PALETTE.length]+'CC'), borderRadius:6, tension:.4, pointRadius:4 }] },
+      options: { ..._autoScaleOptions(), indexAxis: isH ? 'y' : 'x', plugins:{legend:{display:false}} }
+    });
+  }
 }
 
 function _renderBubble() {
-  _destroyChart('chart-bubble');
-  const datasets = STAFF.map((s,i) => {
-    const pts = perfData.filter(d=>d.staffId===s.id).map(d=>{
-      const total=(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0);
-      return { x: i+1, y: d.satisfaction||0, r: Math.max(4, Math.sqrt(total)*2) };
+  const id = 'chart-bubble';
+  _destroyChart(id);
+  const t = _chartTypes[id] || 'bubble';
+  const ctx = el(id).getContext('2d');
+  const isH = _isHorizontal(id);
+
+  if (t === 'bubble') {
+    const datasets = STAFF.map((s,i) => {
+      const pts = perfData.filter(d=>d.staffId===s.id).map(d=>{
+        const total=(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0);
+        return { x:i+1, y:d.satisfaction||0, r:Math.max(4,Math.sqrt(total)*2) };
+      });
+      return { label:s.name, data:pts, backgroundColor:s.color+'99', borderColor:s.color };
     });
-    return { label:s.name, data:pts, backgroundColor:s.color+'99', borderColor:s.color };
-  });
-  const ctx = el('chart-bubble').getContext('2d');
-  _charts['chart-bubble'] = new Chart(ctx, {
-    type: 'bubble',
-    data: { datasets },
-    options: {
-      responsive:true,
-      plugins:{ legend:{ position:'right' }, tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: 인원 ~${Math.round((ctx.raw.r/2)**2)}명, 만족도 ${ctx.raw.y}점` } } },
-      scales:{
-        x:{ min:0, max:STAFF.length+1, ticks:{ callback:(_,i)=>STAFF[i-1]?.name||'' }, title:{display:true,text:'담당자'} },
-        y:{ min:0, max:5.5, title:{display:true,text:'만족도'} }
-      }
-    }
-  });
+    _charts[id] = new Chart(ctx, {
+      type:'bubble', data:{ datasets },
+      options:{ responsive:true, plugins:{ legend:{position:'right'}, tooltip:{ callbacks:{ label: c=>`${c.dataset.label}: 인원~${Math.round((c.raw.r/2)**2)}명, 만족도${c.raw.y}점` } } },
+        scales:{ x:{min:0,max:STAFF.length+1,ticks:{callback:(_,i)=>STAFF[i-1]?.name||''},title:{display:true,text:'담당자'}}, y:{beginAtZero:true,title:{display:true,text:'만족도'}} } }
+    });
+  } else if (t === 'scatter') {
+    const datasets = STAFF.map(s => ({
+      label: s.name,
+      data: perfData.filter(d=>d.staffId===s.id).map(d=>{
+        const total=(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0);
+        return { x:total, y:d.satisfaction||0 };
+      }),
+      backgroundColor: s.color+'99', borderColor: s.color, pointRadius: 5,
+    }));
+    _charts[id] = new Chart(ctx, {
+      type:'scatter', data:{ datasets },
+      options:{ ..._autoScaleOptions(), plugins:{legend:{position:'right'}},
+        scales:{ x:{beginAtZero:true,title:{display:true,text:'인원 수'}}, y:{beginAtZero:true,max:5.5,title:{display:true,text:'만족도'}} } }
+    });
+  } else {
+    // bar / line 등
+    const staffTotals = STAFF.map(s=>({
+      name:s.name, color:s.color,
+      total:perfData.filter(d=>d.staffId===s.id).reduce((sum,d)=>sum+(Number(d.parent)||0)+(Number(d.teacher)||0)+(Number(d.director)||0)+(Number(d.other)||0),0)
+    }));
+    _charts[id] = new Chart(ctx, {
+      type: t==='line' ? 'line' : 'bar',
+      data:{ labels:staffTotals.map(s=>s.name), datasets:[{ label:'총 참가인원', data:staffTotals.map(s=>s.total), backgroundColor:staffTotals.map(s=>s.color+'CC'), borderColor:staffTotals.map(s=>s.color), borderRadius:6, tension:.4, pointRadius:5 }] },
+      options:{ ..._autoScaleOptions(), indexAxis:isH?'y':'x', plugins:{legend:{display:false}} }
+    });
+  }
 }
 
 // ════════════════════════════════════════
