@@ -918,3 +918,35 @@ canvas { padding: 8px 4px; }
   object-fit: cover; border: 2px solid rgba(255,255,255,.3);
   flex-shrink: 0;
 }
+
+/* ════════════════════════════════════════
+   차트 타입 선택 셀렉트 스타일
+   ════════════════════════════════════════ */
+.chart-card .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chart-type-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--pt-surface, #1e2130);
+  color: var(--pt-text, #e2e8f0);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 5px 28px 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2394a3b8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color .2s, box-shadow .2s;
+  min-width: 110px;
+}
+.chart-type-select:hover  { border-color: rgba(255,255,255,0.25); }
+.chart-type-select:focus  { outline: none; border-color: #3B82F6; box-shadow: 0 0 0 2px rgba(59,130,246,.25); }
+.chart-type-select option { background: #1e2130; color: #e2e8f0; }
