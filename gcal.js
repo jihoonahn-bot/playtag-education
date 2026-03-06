@@ -198,24 +198,41 @@ async function _handleLoginTokenResponse(resp) {
 async function _processGoogleLogin(email, name, picture) {
   if (!email) { _resetGoogleLoginBtn(); return; }
 
+  // 🔒 Google OAuth Rate Limiting (비정상 반복 호출 방지)
+  const rl = Security.rateLimit('google_login_' + email, 10, 300000); // 5분에 10회
+  if (rl.blocked) {
+    _resetGoogleLoginBtn();
+    showNotif('⛔ 로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.', 'danger');
+    return;
+  }
+
+  // 🔒 이메일 형식 검증
+  const cleanEmail = typeof Security !== 'undefined' ? Security.Validate.email(email) : email.trim();
+  if (!cleanEmail) { _resetGoogleLoginBtn(); return; }
+
+  // 🔒 이름/사진 URL XSS 방지
+  const cleanName = typeof Security !== 'undefined' ? Security.Validate.text(name || '', 100) : (name || '').slice(0, 100);
+  const cleanPicture = (typeof picture === 'string' && picture.startsWith('https://')) ? picture : '';
+
   // 1. 관리자 이메일 목록 확인
   const adminEmails = _load('pt_admin_emails', ['admin@playtag.ai']);
-  if (adminEmails.includes(email)) {
-    // 관리자로 로그인
-    _doGoogleLogin({ id:'admin', name: name||'관리자', email, picture, role:'admin', branch:'본사' });
+  if (adminEmails.includes(cleanEmail)) {
+    Security.resetRate('google_login_' + email);
+    _doGoogleLogin({ id:'admin', name: cleanName||'관리자', email:cleanEmail, picture:cleanPicture, role:'admin', branch:'본사' });
     return;
   }
 
   // 2. 담당자(STAFF) 이메일 확인
-  const staff = STAFF.find(s => s.email === email);
+  const staff = STAFF.find(s => s.email === cleanEmail);
   if (staff) {
-    _doGoogleLogin({ id: staff.id, name: staff.name, email, picture, role:'staff', branch:'본사', staffId: staff.id });
+    Security.resetRate('google_login_' + email);
+    _doGoogleLogin({ id: staff.id, name: staff.name, email:cleanEmail, picture:cleanPicture, role:'staff', branch:'본사', staffId: staff.id });
     return;
   }
 
   // 3. 등록되지 않은 계정
   _resetGoogleLoginBtn();
-  showNotif(`❌ [${email}]은 등록된 계정이 아닙니다.\n관리자에게 이메일 등록을 요청해주세요.`, 'danger');
+  showNotif(`❌ [${typeof Security !== 'undefined' ? Security.esc(cleanEmail) : cleanEmail}]은 등록된 계정이 아닙니다.\n관리자에게 이메일 등록을 요청해주세요.`, 'danger');
 }
 
 /** 로그인 실행 */
@@ -238,6 +255,10 @@ function _doGoogleLogin(userInfo) {
   // 앱 상태에 세팅
   state.currentUser = userInfo;
   state.currentRole = (userInfo.role === 'admin') ? 'admin' : 'staff';
+  // 🔒 세션 감시 시작 (30분 무활동 자동 로그아웃)
+  if (typeof Security !== 'undefined') {
+    Security.startSessionWatchdog((msg) => { logout(); setTimeout(() => showNotif(msg, 'danger'), 200); });
+  }
 
   // 화면 전환
   el('login-screen').style.display = 'none';
