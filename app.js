@@ -358,7 +358,7 @@ function logout() {
 
 /** 로그인 화면 "회원가입" 버튼 클릭 */
 function openSignup() {
-  ['su-tel','su-biz','su-id','su-pw','su-pw2'].forEach(id => { const e = el(id); if (e) e.value = ''; });
+  ['su-name','su-tel','su-branch','su-id','su-pw','su-pw2'].forEach(id => { const e = el(id); if (e) e.value = ''; });
   hide('su-step2');
   hide('su-error');
   show('su-step1');
@@ -434,7 +434,7 @@ function signupStep2() {
   persist();
 
   closeModal('modal-signup');
-  showNotif(\`🎉 가입 완료! 아이디 [\${newId}] 로 로그인하세요.\`, 'success');
+  showNotif(`🎉 가입 완료! 아이디 [${newId}] 로 로그인하세요.`, 'success');
   const loginIdEl = el('l-id');
   if (loginIdEl) loginIdEl.value = newId;
 }
